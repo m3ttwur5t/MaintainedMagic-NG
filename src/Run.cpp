@@ -107,7 +107,7 @@ namespace MAINT
 	{
 		const auto& baseCost = baseSpell->CalculateMagickaCost(theCaster);
 		const auto& baseDuration = max(static_cast<uint32_t>(1u), baseSpell->effects[0]->GetDuration());
-		const auto& mult = powf(60.0f / baseDuration, 2.0f);
+		const auto& mult = baseDuration < 60.0f ? powf(60.0f / baseDuration, 2.0f) : 60.0f / baseDuration;
 		return roundf(baseCost * mult);
 	}
 
