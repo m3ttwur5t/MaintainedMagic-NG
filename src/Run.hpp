@@ -5,20 +5,13 @@
 
 namespace MAINT
 {
-	void Purge();
-	void LoadSavegameMapping(const std::string&);
-
-	RE::SpellItem* Maintainify(RE::SpellItem* const& theSpell, RE::ConcreteFormFactory<RE::SpellItem, RE::FormType::Spell>* spellFactory);
-	bool IsMaintainable(RE::SpellItem* const& theSpell, RE::Actor* const& theCaster);
+	const float& NEUTRAL_DURATION = 60.0f;
 
 	void ForceMaintainedSpellUpdate(RE::Actor* const&);
 	void AwardPlayerExperience(RE::PlayerCharacter* const& player);
-	void BuildActiveSpellsCache();
-	void MaintainSpell(RE::SpellItem* const& baseSpell, RE::Actor* const& theCaster);
-	void StoreSavegameMapping(const std::string&);
 	void CheckUpkeepValidity(RE::Actor* const&);
 
-	const auto lexical_cast_hex_to_int(const std::string& hex_string)
+	const auto lexical_cast_hex_to_formid(const std::string& hex_string)
 	{
 		if (hex_string.substr(0, 2) != "0x") {
 			throw std::invalid_argument("Input string is not a valid hexadecimal format (should start with '0x').");
@@ -30,15 +23,6 @@ namespace MAINT
 			throw std::invalid_argument("Failed to convert hexadecimal string to integer.");
 		}
 		return static_cast<RE::FormID>(result);
-	}
-	float lexical_cast_float(const std::string& float_string)
-	{
-		std::istringstream iss(float_string);
-		float result;
-		if (!(iss >> result)) {
-			throw std::invalid_argument("Failed to convert string to float.");
-		}
-		return result;
 	}
 
 	namespace CONFIG
@@ -137,9 +121,11 @@ namespace MAINT
 
 	namespace CACHE
 	{
-		inline BiMap<RE::SpellItem*, RE::SpellItem*> SpellToMaintainedSpell;
-		inline BiMap<RE::SpellItem*, std::tuple<RE::SpellItem*, float, float>> ActiveMaintainedSpells;
-		inline BiMap<RE::SpellItem*, float> MaintSpellToCost;
+		typedef RE::SpellItem InfiniteSpell;
+		typedef RE::SpellItem DebuffSpell;
+		typedef std::pair<InfiniteSpell*, DebuffSpell*> MaintainedSpell;
+
+		inline BiMap<RE::SpellItem*, MaintainedSpell> SpellToMaintainedSpell;
 	}
 
 	class FORMS
@@ -156,7 +142,7 @@ namespace MAINT
 		{
 			RE::FormID off = 0x0;
 			for (const auto& [k, v] : config.GetAllKeyValuePairs(std::format("MAP:{}", saveFile))) {
-				RE::FormID cur = lexical_cast_hex_to_int(v);
+				RE::FormID cur = lexical_cast_hex_to_formid(v);
 				if (cur > off)
 					off = cur;
 			}
