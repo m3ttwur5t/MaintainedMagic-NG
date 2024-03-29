@@ -8,8 +8,22 @@ namespace MAINT
 		for (auto const& eff : theSpell->effects) {
 			bool const& persists = eff->baseEffect->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kFXPersist);
 			if (persists) {
-				eff->baseEffect->data.flags.reset(RE::EffectSetting::EffectSettingData::Flag::kFXPersist);
-				ret.emplace_back(eff);
+				switch (eff->baseEffect->GetArchetype()) {
+				case RE::EffectSetting::Archetype::kLight:
+				case RE::EffectSetting::Archetype::kBoundWeapon:
+				case RE::EffectSetting::Archetype::kDisguise:
+				case RE::EffectSetting::Archetype::kSummonCreature:
+				case RE::EffectSetting::Archetype::kNightEye:
+				case RE::EffectSetting::Archetype::kInvisibility:
+				case RE::EffectSetting::Archetype::kGuide:
+				case RE::EffectSetting::Archetype::kWerewolf:
+				case RE::EffectSetting::Archetype::kWerewolfFeed:
+					logger::info("{} fx will not be silenced", eff->baseEffect->GetName());
+					break;
+				default:
+					eff->baseEffect->data.flags.reset(RE::EffectSetting::EffectSettingData::Flag::kFXPersist);
+					ret.emplace_back(eff);
+				}
 			}
 		}
 		return ret;
@@ -258,7 +272,7 @@ namespace MAINT
 			if (aeff->spell == baseSpell && aeff->GetCasterActor().get() == theCaster && aeff->effect == baseSpell->effects.front()) {
 				const auto& durmult = sqrt(baseDur / aeff->duration);
 				mult *= durmult;
-				logger::info("NeutralDur {} vs BaseDur {} vs RealDur {} => Cost Mult: {}%", NEUTRAL_DURATION, baseDur, aeff->duration, mult);
+				logger::info("NeutralDur {} vs BaseDur {} vs RealDur {} => Cost Mult: {}x", NEUTRAL_DURATION, baseDur, aeff->duration, mult);
 				break;
 			}
 		}
@@ -284,7 +298,7 @@ namespace MAINT
 		}
 
 		if (MAINT::CACHE::SpellToMaintainedSpell.containsKey(baseSpell)) {
-			logger::info("\tActor already has constant version of {}", baseSpell->GetName());
+			logger::info("\tActor already has constant version of {}.", baseSpell->GetName());
 			return;
 		}
 
@@ -309,6 +323,7 @@ namespace MAINT
 
 		MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->AddForm(baseSpell);
 		RE::DebugNotification(std::format("Maintaining {} for {} Magicka.", baseSpell->GetName(), static_cast<uint32_t>(magCost)).c_str());
+		MAINT::UpdatePCHook::ResetEffCheckTimer();
 	}
 
 	static void StoreSavegameMapping(const std::string& identifier)
@@ -365,35 +380,43 @@ namespace MAINT
 		if (MAINT::CACHE::SpellToMaintainedSpell.empty())
 			return;
 
+		std::map<RE::SpellItem*, std::unordered_multiset<RE::ActiveEffect*>> SpellToActiveEffects;
+
+		const auto& effList = theActor->AsMagicTarget()->GetActiveEffectList();
+		for (const auto& e : *effList) {
+			if (auto const& asSpl = e->spell->As<RE::SpellItem>(); asSpl != nullptr) {
+				auto const& hasKywd = asSpl->HasKeyword(MAINT::FORMS::GetSingleton().KywdMaintainedSpell);
+				auto const& isBaseSpell = MAINT::CACHE::SpellToMaintainedSpell.containsKey(asSpl);
+				if (isBaseSpell) {
+					auto const& [mSpl, _] = MAINT::CACHE::SpellToMaintainedSpell.getValue(asSpl);
+					SpellToActiveEffects[mSpl].insert(e);
+				} else if (hasKywd) {
+					e->elapsedSeconds = 0.0f;
+					SpellToActiveEffects[asSpl].insert(e);
+				}
+			}
+		}
+
 		std::vector<std::pair<RE::SpellItem*, MAINT::CACHE::MaintainedSpell>> toRemove;
 		for (const auto& [baseSpell, maintainedSpellPair] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap()) {
 			const auto& [maintSpell, debuffSpell] = maintainedSpellPair;
-			const auto& maintEffect = maintSpell->effects.front()->baseEffect;
 
-			bool notFound = true;
-			const auto& effList = theActor->AsMagicTarget()->GetActiveEffectList();
-			for (const auto& e : *effList) {
-				if (e->effect->baseEffect != maintEffect) {
-					continue;
-				}
-				notFound = false;
-				
-				auto const& maintMagnitude = maintSpell->effects.front()->effectItem.magnitude;
-				auto isActive = !e->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled);
-				const auto& magFail = e->magnitude >= 0.0f ? static_cast<int>(e->magnitude) < static_cast<int>(maintMagnitude) : false;
-				auto const& intDur = static_cast<uint32_t>(e->duration - e->elapsedSeconds);
-				const auto& durFail = intDur >= 0 ? intDur != 0 && intDur < maintSpell->effects.front()->effectItem.duration : false;
-				if (!isActive || magFail || durFail) {
-					toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
-					break;
-				}
-				e->elapsedSeconds = 0.0f;
+			if (!SpellToActiveEffects.contains(maintSpell) || SpellToActiveEffects.at(maintSpell).size() != maintSpell->effects.size()) {
+				logger::info("{} not found or eff count mismatch", maintSpell->GetName());
+				toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
+				continue;
 			}
-			if (notFound) {
-				logger::info("{} Not found.", maintSpell->GetName());
+
+			auto const& allMyEffects = SpellToActiveEffects.at(maintSpell);
+			auto const& hasActives = std::find_if(allMyEffects.begin(), allMyEffects.end(), [&](RE::ActiveEffect* e) {
+				return !e->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled);
+			});
+			if (hasActives == allMyEffects.end()) {
+				logger::info("{} active count is zero", maintSpell->GetName());
 				toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
 			}
 		}
+
 		if (!toRemove.empty()) {
 			for (const auto& [baseSpell, maintSpellPair] : toRemove) {
 				const auto& [maintSpell, debuffSpell] = maintSpellPair;
@@ -405,10 +428,10 @@ namespace MAINT
 
 				MAINT::CACHE::SpellToMaintainedSpell.eraseKey(baseSpell);
 			}
+			MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->ClearData();
+			for (const auto& [spl, _] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap())
+				MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->AddForm(spl);
 		}
-		MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->ClearData();
-		for (const auto& [spl, _] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap())
-			MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->AddForm(spl);
 	}
 }
 
@@ -427,10 +450,9 @@ public:
 		if (static_cast<short>(MAINT::FORMS::GetSingleton().GlobMaintainModeEnabled->value) == 0)
 			return RE::BSEventNotifyControl::kContinue;
 
-		if (const auto& theSpell = RE::TESForm::LookupByID<RE::SpellItem>(a_event->spell)) {
+		if (const auto& theSpell = RE::TESForm::LookupByID<RE::SpellItem>(a_event->spell))
 			MAINT::MaintainSpell(theSpell, theCaster);
-			MAINT::UpdatePCHook::ResetEffCheckTimer();
-		}
+		
 		return RE::BSEventNotifyControl::kContinue;
 	}
 
