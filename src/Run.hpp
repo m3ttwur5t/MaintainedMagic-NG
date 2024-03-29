@@ -5,7 +5,7 @@
 
 namespace MAINT
 {
-	const float& NEUTRAL_DURATION = 60.0f;
+	float constexpr NEUTRAL_DURATION = 60.0f;
 
 	void ForceMaintainedSpellUpdate(RE::Actor* const&);
 	void AwardPlayerExperience(RE::PlayerCharacter* const& player);
@@ -25,25 +25,74 @@ namespace MAINT
 		return static_cast<RE::FormID>(result);
 	}
 
+	template <typename Data>
+	class ConcurrentQueue
+	{
+	private:
+		std::queue<Data> theQueue;
+		mutable std::mutex theMutex;
+
+	public:
+		void push(const Data& data)
+		{
+			std::lock_guard<std::mutex> guard(theMutex);
+			theQueue.push(data);
+		}
+
+		bool empty() const
+		{
+			std::lock_guard<std::mutex> guard(theMutex);
+			return theQueue.empty();
+		}
+
+		Data& front()
+		{
+			std::lock_guard<std::mutex> guard(theMutex);
+			return theQueue.front();
+		}
+
+		Data const& front() const
+		{
+			std::lock_guard<std::mutex> guard(theMutex);
+			return theQueue.front();
+		}
+
+		void pop()
+		{
+			std::lock_guard<std::mutex> guard(theMutex);
+			theQueue.pop();
+		}
+	};
+
 	namespace CONFIG
 	{
-		class Plugin
+		std::string const& MAP_FILE		= "Data/SKSE/Plugins/MaintainedMagicNG.ini";
+		std::string const& CONFIG_FILE	= "Data/SKSE/Plugins/MaintainedMagicNG.Config.ini";
+		inline bool DoSilenceFX;
+		class ConfigBase
 		{
 		private:
-			const std::string iniPath = "Data/SKSE/Plugins/MaintainedMagicNG.ini";
-			CSimpleIniA Ini;
+			static inline std::map<std::string, ConfigBase*> MultiConfigMap;
 
-			Plugin()
+			CSimpleIniA Ini;
+			std::string IniPath;
+			ConfigBase(std::string const& iniPath) :
+				IniPath(iniPath)
 			{
 				Ini.SetUnicode();
 				Ini.LoadFile(iniPath.c_str());
 			}
 
 		public:
-			static Plugin& GetSingleton()
+			static ConfigBase* GetSingleton(std::string const& iniPath)
 			{
-				static Plugin instance;
-				return instance;
+				if (!MultiConfigMap.contains(iniPath)) {
+					logger::info("Load INI: {}", iniPath);
+					ConfigBase* instance = new ConfigBase(iniPath);
+					MultiConfigMap[iniPath] = instance;
+				}
+				auto const& ret = MultiConfigMap.at(iniPath);
+				return ret;
 			}
 
 			bool HasKey(const std::string& section, const std::string& key)
@@ -111,11 +160,11 @@ namespace MAINT
 
 			void Save()
 			{
-				Ini.SaveFile(iniPath.c_str());
+				Ini.SaveFile(IniPath.c_str());
 			}
 
-			Plugin(Plugin const&) = delete;
-			void operator=(Plugin const&) = delete;
+			ConfigBase(ConfigBase const&) = delete;
+			void operator=(ConfigBase const&) = delete;
 		};
 	}
 
@@ -131,17 +180,17 @@ namespace MAINT
 	class FORMS
 	{
 	public:
-		static const RE::FormID FORMID_OFFSET_BASE = 0xFF077000;
+		static constexpr RE::FormID FORMID_OFFSET_BASE = 0xFF077000;
 		RE::FormID CurrentOffset;
 
 		void SetOffset(RE::FormID offset)
 		{
 			CurrentOffset = offset;
 		}
-		void LoadOffset(const CONFIG::Plugin& config, const std::string& saveFile)
+		void LoadOffset(const CONFIG::ConfigBase* config, const std::string& saveFile)
 		{
 			RE::FormID off = 0x0;
-			for (const auto& [k, v] : config.GetAllKeyValuePairs(std::format("MAP:{}", saveFile))) {
+			for (const auto& [k, v] : config->GetAllKeyValuePairs(std::format("MAP:{}", saveFile))) {
 				RE::FormID cur = lexical_cast_hex_to_formid(v);
 				if (cur > off)
 					off = cur;
@@ -164,6 +213,7 @@ namespace MAINT
 
 		//RE::BGSEquipSlot* EquipSlotRight = RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x13F42);
 		RE::BGSEquipSlot* EquipSlotVoice = RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x25BEE);
+		RE::BGSKeyword* KywdMagicCloak = RE::TESForm::LookupByID<RE::BGSKeyword>(0xB62E4);
 		RE::BGSKeyword* KywdMaintainedSpell = RE::TESDataHandler::GetSingleton()->LookupForm<RE::BGSKeyword>(0x801, "MaintainedMagic.esp"sv);
 		RE::BGSKeyword* KywdExcludeFromSystem = RE::TESDataHandler::GetSingleton()->LookupForm<RE::BGSKeyword>(0x80A, "MaintainedMagic.esp"sv);
 		RE::SpellItem* SpelMagickaDebuffTemplate = RE::TESDataHandler::GetSingleton()->LookupForm<RE::SpellItem>(0x802, "MaintainedMagic.esp"sv);
@@ -194,6 +244,12 @@ namespace MAINT
 			TimerActiveEffCheck = 0.0f;
 		}
 
+		static void PushFXRestore(RE::Effect* const& eff)
+		{
+			EffectRestorationQueue.push(eff);
+			ResetEffCheckTimer();
+		}
+
 	private:
 		UpdatePCHook()
 		{
@@ -208,6 +264,11 @@ namespace MAINT
 			if (TimerActiveEffCheck >= 2.5f) {
 				MAINT::ForceMaintainedSpellUpdate(pc);
 				MAINT::CheckUpkeepValidity(pc);
+				while (!EffectRestorationQueue.empty()) {
+					EffectRestorationQueue.front()->baseEffect->data.flags.set(RE::EffectSetting::EffectSettingData::Flag::kFXPersist);
+					EffectRestorationQueue.pop();
+				}
+
 				TimerActiveEffCheck = 0.0f;
 			}
 			if (TimerExperienceAward >= 300) {
@@ -220,5 +281,6 @@ namespace MAINT
 
 		static inline std::atomic<float> TimerActiveEffCheck;
 		static inline std::atomic<float> TimerExperienceAward;
+		static inline ConcurrentQueue<RE::Effect*> EffectRestorationQueue;
 	};
 }

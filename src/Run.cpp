@@ -2,6 +2,19 @@
 
 namespace MAINT
 {
+	static std::vector<RE::Effect*> SilenceSpellFX(RE::SpellItem* const& theSpell)
+	{
+		std::vector<RE::Effect*> ret;
+		for (auto const& eff : theSpell->effects) {
+			bool const& persists = eff->baseEffect->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kFXPersist);
+			if (persists) {
+				eff->baseEffect->data.flags.reset(RE::EffectSetting::EffectSettingData::Flag::kFXPersist);
+				ret.emplace_back(eff);
+			}
+		}
+		return ret;
+	}
+
 	static bool IsMaintainable(RE::SpellItem* const& theSpell, RE::Actor* const& theCaster)
 	{
 		if (theSpell->As<RE::ScrollItem>()) {
@@ -20,7 +33,7 @@ namespace MAINT
 			logger::info("Spell is not FF");
 			return false;
 		}
-		if (theSpell->effects[0]->GetDuration() <= 5.0) {
+		if (theSpell->effects.front()->GetDuration() <= 5.0) {
 			logger::info("Spell has duration of 5 seconds or less");
 			return false;
 		}
@@ -66,13 +79,14 @@ namespace MAINT
 
 		infiniteSpell->fullName = std::format("Maintained {}", theSpell->GetFullName());
 
-		infiniteSpell->data = RE::SpellItem::Data{ theSpell->data };
-
+		infiniteSpell->data = theSpell->data;
+		//RE::SpellItem::Data{ theSpell->data };
 		infiniteSpell->avEffectSetting = theSpell->avEffectSetting;
 		infiniteSpell->boundData = theSpell->boundData;
 		infiniteSpell->descriptionText = theSpell->descriptionText;
 
-		infiniteSpell->equipSlot = MAINT::FORMS::GetSingleton().EquipSlotVoice;
+		infiniteSpell->equipSlot = theSpell->equipSlot;
+		//MAINT::FORMS::GetSingleton().EquipSlotVoice;
 
 		infiniteSpell->data.spellType = RE::MagicSystem::SpellType::kAbility;
 		infiniteSpell->SetDelivery(RE::MagicSystem::Delivery::kSelf);
@@ -80,10 +94,17 @@ namespace MAINT
 
 		for (uint32_t i = 0; i < theSpell->numKeywords; ++i)
 			infiniteSpell->AddKeyword(theSpell->GetKeywordAt(i).value());
+
+		for (auto const& eff : theSpell->effects) {
+			if (eff->baseEffect->HasArchetype(RE::EffectSetting::Archetype::kCloak)) {
+				infiniteSpell->AddKeyword(MAINT::FORMS::GetSingleton().KywdMagicCloak);
+				break;
+			}
+		}
+
 		infiniteSpell->AddKeyword(MAINT::FORMS::GetSingleton().KywdMaintainedSpell);
 
-		for (const auto& eff : theSpell->effects)
-			infiniteSpell->effects.emplace_back(eff);
+		infiniteSpell->effects = theSpell->effects;
 
 		return infiniteSpell;
 	}
@@ -197,8 +218,8 @@ namespace MAINT
 		}
 
 		const auto subSection = std::format("MAP:{}", identifier);
-		auto& ini = MAINT::CONFIG::Plugin::GetSingleton();
-		for (const auto& [k, v] : ini.GetAllKeyValuePairs(subSection)) {
+		const auto ini = MAINT::CONFIG::ConfigBase::GetSingleton(MAINT::CONFIG::MAP_FILE);
+		for (const auto& [k, v] : ini->GetAllKeyValuePairs(subSection)) {
 			const auto& [plugin, formid] = getPluginNameWithLocalID(k);
 			const auto& [maintSpellFormID, debuffSpellFormID] = getSpellIDWithDebuffID(v);
 
@@ -227,7 +248,6 @@ namespace MAINT
 
 	static auto CalculateUpkeepCost(RE::SpellItem* const& baseSpell, RE::Actor* const& theCaster)
 	{
-		
 		logger::info("CalculateUpkeepCost()");
 		const auto& baseCost = baseSpell->CalculateMagickaCost(theCaster);
 		const auto& baseDuration = max(static_cast<uint32_t>(1u), baseSpell->effects.front()->GetDuration());
@@ -276,6 +296,12 @@ namespace MAINT
 		theCaster->AsMagicTarget()->DispelEffect(baseSpell, handle);
 		theCaster->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIERS::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kMagicka, baseCost);
 
+		if (MAINT::CONFIG::DoSilenceFX) {
+			logger::info("Silencing SpellFX");
+			for (auto const& eff : MAINT::SilenceSpellFX(maintSpell))
+				MAINT::UpdatePCHook::PushFXRestore(eff);
+		}
+
 		logger::info("\tAdding Constant Effect with Maintain Cost of {}", magCost);
 		theCaster->AddSpell(maintSpell);
 		theCaster->AddSpell(debuffSpell);
@@ -288,19 +314,19 @@ namespace MAINT
 	static void StoreSavegameMapping(const std::string& identifier)
 	{
 		logger::info("StoreSavegameMapping({})", identifier);
-		static auto& ini = MAINT::CONFIG::Plugin::GetSingleton();
+		static auto ini = MAINT::CONFIG::ConfigBase::GetSingleton(MAINT::CONFIG::MAP_FILE);
 		const auto subSection = std::format("MAP:{}", identifier);
-		ini.DeleteSection(subSection);
+		ini->DeleteSection(subSection);
 		for (const auto& [baseSpell, maintData] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap()) {
 			const auto& [maintSpell, debuffSpell] = maintData;
 			auto keyString = std::format("{}~0x{:08X}", baseSpell->GetFile(0)->GetFilename(), baseSpell->GetLocalFormID());
 			auto rightHandSide = std::format("0x{:08X}~0x{:08X}", maintSpell->GetFormID(), debuffSpell->GetFormID());
-			ini.SetValue(subSection,
+			ini->SetValue(subSection,
 				keyString,
 				rightHandSide,
 				std::format("# {}", baseSpell->GetName()));
 		}
-		ini.Save();
+		ini->Save();
 	}
 
 	void AwardPlayerExperience(RE::PlayerCharacter* const& player)
@@ -351,15 +377,17 @@ namespace MAINT
 					continue;
 				}
 				notFound = false;
-
+				
 				auto const& maintMagnitude = maintSpell->effects.front()->effectItem.magnitude;
 				auto isActive = !e->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled);
 				const auto& magFail = e->magnitude >= 0.0f ? static_cast<int>(e->magnitude) < static_cast<int>(maintMagnitude) : false;
-				const auto& durFail = e->duration >= 0.0f ? static_cast<uint32_t>(e->duration) != 0 : false;
+				auto const& intDur = static_cast<uint32_t>(e->duration - e->elapsedSeconds);
+				const auto& durFail = intDur >= 0 ? intDur != 0 && intDur < maintSpell->effects.front()->effectItem.duration : false;
 				if (!isActive || magFail || durFail) {
 					toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
 					break;
 				}
+				e->elapsedSeconds = 0.0f;
 			}
 			if (notFound) {
 				logger::info("{} Not found.", maintSpell->GetName());
@@ -422,6 +450,16 @@ void OnInit(SKSE::MessagingInterface::Message* const a_msg)
 {
 	switch (a_msg->type) {
 	case SKSE::MessagingInterface::kDataLoaded:
+		logger::info("Maintained Map @ {}", MAINT::CONFIG::MAP_FILE);
+		logger::info("Maintained Config @ {}", MAINT::CONFIG::CONFIG_FILE);
+
+		static auto const& ini = MAINT::CONFIG::ConfigBase::GetSingleton(MAINT::CONFIG::CONFIG_FILE);
+		if (!ini->HasKey("CONFIG", "SilencePersistentSpellFX")) {
+			ini->SetBoolValue("CONFIG", "SilencePersistentSpellFX", false, "# If true, will disable persistent spell visuals on maintained spells. This includes flesh spell FX, the aura of Cloak spells, pretty much everything else.");
+			ini->Save();
+		}
+		MAINT::CONFIG::DoSilenceFX = ini->GetBoolValue("CONFIG", "SilencePersistentSpellFX");
+		logger::info("FX Will {} silenced", MAINT::CONFIG::DoSilenceFX ? "be" : "not be");
 		break;
 	case SKSE::MessagingInterface::kPreLoadGame:
 	case SKSE::MessagingInterface::kNewGame:
@@ -430,7 +468,7 @@ void OnInit(SKSE::MessagingInterface::Message* const a_msg)
 			std::string saveFile(charData, a_msg->dataLen);
 			logger::info("Load : {}", saveFile);
 			MAINT::Purge();
-			MAINT::FORMS::GetSingleton().LoadOffset(MAINT::CONFIG::Plugin::GetSingleton(), saveFile);
+			MAINT::FORMS::GetSingleton().LoadOffset(MAINT::CONFIG::ConfigBase::GetSingleton(MAINT::CONFIG::MAP_FILE), saveFile);
 			MAINT::LoadSavegameMapping(saveFile);
 		}
 		break;
