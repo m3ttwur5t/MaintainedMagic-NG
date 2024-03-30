@@ -409,7 +409,7 @@ namespace MAINT
 			auto const& mSplInList = SpellToActiveEffects.find(maintSpell);
 
 			if (mSplInList == SpellToActiveEffects.end()) {
-				logger::debug("{} not found", maintSpell->GetName());
+				logger::debug("{} not found on Actor", maintSpell->GetName());
 				toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
 				continue;
 			}
@@ -417,7 +417,7 @@ namespace MAINT
 			auto const& mSpl = mSplInList->first;
 			auto const& effSet = mSplInList->second;
 			if (mSpl->effects.size() < effSet.size()) {
-				logger::debug("{} eff count mismatch: spell has fewer", mSpl->GetName());
+				logger::debug("{} EFF count mismatch: Spell has LESS", mSpl->GetName());
 				logger::debug("\t{} has:", mSpl->GetName());
 				short n = 1;
 				for (auto const& te : mSpl->effects) {
@@ -442,39 +442,39 @@ namespace MAINT
 					}
 					return uniqueItems;
 				};
-				logger::debug("{} eff count mismatch: spell has more", mSpl->GetName());
+				logger::debug("{} EFF count mismatch: Spell has MORE", mSpl->GetName());
 				logger::debug("\t{} has:", mSpl->GetName());
 
 				short n = 1;
 				for (auto const& te : mSpl->effects) {
-					logger::debug("\t{}\t{}", n++, te->baseEffect->GetName());
+					logger::debug("\t{}\t{} (0x{:08X})", n++, te->baseEffect->GetName(), te->baseEffect->GetFormID());
 				}
 
 				auto const& uniqueList = getUniques(mSpl->effects);
 				if (!uniqueList.empty()) {
-					logger::debug("\t..of which the following are exclusive:");
+					logger::debug("\tThe following have exclusivity:");
 					n = 1;
 					for (auto const& te : uniqueList) {
-						logger::debug("\t{}\t{}", n++, te->baseEffect->GetName());
+						logger::debug("\t{}\t{} (0x{:08X}) # Assoc: {}", n++, te->baseEffect->GetName(), te->baseEffect->GetFormID(), te->baseEffect->data.associatedForm->GetName());
 					}
 				}
 				logger::debug("\tEffectSet has:");
 				n = 1;
 				for (auto const& te : effSet) {
-					logger::debug("\t{}\t{}, Src: {}", n++, te->effect->baseEffect->GetName(), te->spell ? te->spell->GetName() : "NULL/UNK");
+					logger::debug("\t{}\t{} (0x{}), Src: {}", n++, te->effect->baseEffect->GetName(), te->effect->baseEffect->GetFormID(), te->spell ? te->spell->GetName() : "NULL/UNK");
 				}
 
 				auto const& hasDifferentSource = std::find_if(effSet.begin(), effSet.end(), [&](RE::ActiveEffect* e) {
 					return e->spell->As<RE::SpellItem>() != mSpl;
 				});
 				if (hasDifferentSource != effSet.end()) {
-					logger::debug("\t{} eff list source mismatch, at least one: {}", mSpl->GetName(), (*hasDifferentSource)->spell->GetName());
+					logger::debug("\t{} source mismatch! Found at least one: {} (0x{:08X})", mSpl->GetName(), (*hasDifferentSource)->spell->GetName(), (*hasDifferentSource)->spell->GetFormID());
 					toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
 					continue;
 				} else {
-					logger::debug("\tbut all active sources match");
+					logger::debug("\tAll active sources match");
 					if (uniqueList.size() > effSet.size()) {
-						logger::debug("\tbut not all uniques are present");
+						logger::debug("\tBut exclusives are missing");
 						toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
 						continue;
 					}

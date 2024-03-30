@@ -261,14 +261,13 @@ namespace MAINT
 			UpdatePC(pc, delta);
 			TimerActiveEffCheck += delta;
 			TimerExperienceAward += delta;
-			if (TimerActiveEffCheck >= 2.5f) {
+			if (TimerActiveEffCheck >= 2.50f) {
 				MAINT::ForceMaintainedSpellUpdate(pc);
 				MAINT::CheckUpkeepValidity(pc);
 				while (!EffectRestorationQueue.empty()) {
 					EffectRestorationQueue.front()->baseEffect->data.flags.set(RE::EffectSetting::EffectSettingData::Flag::kFXPersist);
 					EffectRestorationQueue.pop();
 				}
-
 				TimerActiveEffCheck = 0.0f;
 			}
 			if (TimerExperienceAward >= 300) {
