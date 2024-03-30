@@ -86,7 +86,7 @@ namespace MAINT
 	{
 		static auto const& spellFactory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::SpellItem>();
 		const auto& fileString = theSpell->GetFile(0) ? theSpell->GetFile(0)->GetFilename() : "VIRTUAL";
-		logger::info("Maintainify({}, 0x{:08X}~{})", theSpell->GetName(), theSpell->GetFormID(), fileString);
+		logger::info("Maintainify({}, 0x{:08X}~{})", theSpell->GetName(), theSpell->GetLocalFormID(), fileString);
 
 		auto infiniteSpell = spellFactory->Create();
 		infiniteSpell->SetFormID(MAINT::FORMS::GetSingleton().NextFormID(), false);
@@ -127,7 +127,7 @@ namespace MAINT
 	{
 		static auto const& spellFactory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::SpellItem>();
 		const auto& fileString = theSpell->GetFile(0) ? theSpell->GetFile(0)->GetFilename() : "VIRTUAL";
-		logger::info("Debuffify({}, 0x{:08X}~{})", theSpell->GetName(), theSpell->GetFormID(), fileString);
+		logger::info("Debuffify({}, 0x{:08X}~{})", theSpell->GetName(), theSpell->GetLocalFormID(), fileString);
 
 		auto debuffSpell = spellFactory->Create();
 		debuffSpell->SetFormID(MAINT::FORMS::GetSingleton().NextFormID(), false);
@@ -379,12 +379,17 @@ namespace MAINT
 	{
 		if (MAINT::CACHE::SpellToMaintainedSpell.empty())
 			return;
+		constexpr uint32_t _AVG_WINDOW{ 100 };
+		static double _runTime{ 0.0 };
+		static uint32_t _runCount{ 0 };
+		auto start = std::chrono::high_resolution_clock::now();
 
 		std::map<RE::SpellItem*, std::unordered_multiset<RE::ActiveEffect*>> SpellToActiveEffects;
+		static auto const& mmDebufEffect = MAINT::FORMS::GetSingleton().SpelMagickaDebuffTemplate->effects.front();
 
 		const auto& effList = theActor->AsMagicTarget()->GetActiveEffectList();
 		for (const auto& e : *effList) {
-			if (auto const& asSpl = e->spell->As<RE::SpellItem>(); asSpl != nullptr) {
+			if (auto const& asSpl = e->spell->As<RE::SpellItem>(); asSpl != nullptr && e->effect->baseEffect != mmDebufEffect->baseEffect) {
 				auto const& hasKywd = asSpl->HasKeyword(MAINT::FORMS::GetSingleton().KywdMaintainedSpell);
 				auto const& isBaseSpell = MAINT::CACHE::SpellToMaintainedSpell.containsKey(asSpl);
 				if (isBaseSpell) {
@@ -401,18 +406,87 @@ namespace MAINT
 		for (const auto& [baseSpell, maintainedSpellPair] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap()) {
 			const auto& [maintSpell, debuffSpell] = maintainedSpellPair;
 
-			if (!SpellToActiveEffects.contains(maintSpell) || SpellToActiveEffects.at(maintSpell).size() != maintSpell->effects.size()) {
-				logger::info("{} not found or eff count mismatch", maintSpell->GetName());
+			auto const& mSplInList = SpellToActiveEffects.find(maintSpell);
+
+			if (mSplInList == SpellToActiveEffects.end()) {
+				logger::debug("{} not found", maintSpell->GetName());
 				toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
 				continue;
 			}
 
+			auto const& mSpl = mSplInList->first;
+			auto const& effSet = mSplInList->second;
+			if (mSpl->effects.size() < effSet.size()) {
+				logger::debug("{} eff count mismatch: spell has fewer", mSpl->GetName());
+				logger::debug("\t{} has:", mSpl->GetName());
+				short n = 1;
+				for (auto const& te : mSpl->effects) {
+					logger::debug("\t{}\t{}", n++, te->baseEffect->GetName());
+				}
+				logger::debug("\tEffectSet has:");
+				n = 1;
+				for (auto const& te : effSet) {
+					logger::debug("\t{}\t{}, Src: {}", n++, te->effect->baseEffect->GetName(), te->spell ? te->spell->GetName() : "NULL/UNK");
+				}
+				toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
+				continue;
+			} else if (mSpl->effects.size() > effSet.size()) {
+				auto constexpr getUniques = [&](RE::BSTArray<RE::Effect*> arr) {
+					std::set<RE::TESForm*> uniqueItemsSet;
+					std::vector<RE::Effect*> uniqueItems;
+
+					for (const auto& item : arr) {
+						if (item->baseEffect->data.associatedForm != nullptr && uniqueItemsSet.insert(item->baseEffect->data.associatedForm).second) {  // .second is true if insertion took place
+							uniqueItems.push_back(item);
+						}
+					}
+					return uniqueItems;
+				};
+				logger::debug("{} eff count mismatch: spell has more", mSpl->GetName());
+				logger::debug("\t{} has:", mSpl->GetName());
+
+				short n = 1;
+				for (auto const& te : mSpl->effects) {
+					logger::debug("\t{}\t{}", n++, te->baseEffect->GetName());
+				}
+
+				auto const& uniqueList = getUniques(mSpl->effects);
+				if (!uniqueList.empty()) {
+					logger::debug("\t..of which the following are exclusive:");
+					n = 1;
+					for (auto const& te : uniqueList) {
+						logger::debug("\t{}\t{}", n++, te->baseEffect->GetName());
+					}
+				}
+				logger::debug("\tEffectSet has:");
+				n = 1;
+				for (auto const& te : effSet) {
+					logger::debug("\t{}\t{}, Src: {}", n++, te->effect->baseEffect->GetName(), te->spell ? te->spell->GetName() : "NULL/UNK");
+				}
+
+				auto const& hasDifferentSource = std::find_if(effSet.begin(), effSet.end(), [&](RE::ActiveEffect* e) {
+					return e->spell->As<RE::SpellItem>() != mSpl;
+				});
+				if (hasDifferentSource != effSet.end()) {
+					logger::debug("\t{} eff list source mismatch, at least one: {}", mSpl->GetName(), (*hasDifferentSource)->spell->GetName());
+					toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
+					continue;
+				} else {
+					logger::debug("\tbut all active sources match");
+					if (uniqueList.size() > effSet.size()) {
+						logger::debug("\tbut not all uniques are present");
+						toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
+						continue;
+					}
+				}
+			}
+
 			auto const& allMyEffects = SpellToActiveEffects.at(maintSpell);
-			auto const& hasActives = std::find_if(allMyEffects.begin(), allMyEffects.end(), [&](RE::ActiveEffect* e) {
+			auto const& hasActives = std::find_if(allMyEffects.begin(), allMyEffects.end(), [](RE::ActiveEffect* e) {
 				return !e->flags.any(RE::ActiveEffect::Flag::kInactive, RE::ActiveEffect::Flag::kDispelled);
 			});
 			if (hasActives == allMyEffects.end()) {
-				logger::info("{} active count is zero", maintSpell->GetName());
+				logger::debug("{} active count is zero", maintSpell->GetName());
 				toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
 			}
 		}
@@ -420,7 +494,7 @@ namespace MAINT
 		if (!toRemove.empty()) {
 			for (const auto& [baseSpell, maintSpellPair] : toRemove) {
 				const auto& [maintSpell, debuffSpell] = maintSpellPair;
-				logger::info("Dispelling missing {} (0x{:08X})", maintSpell->GetName(), maintSpell->GetFormID());
+				logger::info("Dispelling missing/invalid {} (0x{:08X})", maintSpell->GetName(), maintSpell->GetFormID());
 
 				theActor->RemoveSpell(maintSpell);
 				theActor->RemoveSpell(debuffSpell);
@@ -431,6 +505,17 @@ namespace MAINT
 			MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->ClearData();
 			for (const auto& [spl, _] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap())
 				MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->AddForm(spl);
+		}
+
+		auto end = std::chrono::high_resolution_clock::now();
+		std::chrono::duration<double> duration = end - start;
+		_runTime += duration.count();
+		_runCount++;
+		if (_runCount == _AVG_WINDOW) {
+			auto _avgMs = (_runTime / _runCount) * 1000;
+			logger::info("ForceMaintainedSpellUpdate() avg time: {}ms", _avgMs);
+			_runTime = 0.0;
+			_runCount = 0;
 		}
 	}
 }
@@ -452,7 +537,7 @@ public:
 
 		if (const auto& theSpell = RE::TESForm::LookupByID<RE::SpellItem>(a_event->spell))
 			MAINT::MaintainSpell(theSpell, theCaster);
-		
+
 		return RE::BSEventNotifyControl::kContinue;
 	}
 
@@ -468,20 +553,43 @@ public:
 	}
 };
 
+static void ReadConfiguration()
+{
+	logger::info("Maintained Map @ {}", MAINT::CONFIG::MAP_FILE);
+	logger::info("Maintained Config @ {}", MAINT::CONFIG::CONFIG_FILE);
+
+	static auto const& ini = MAINT::CONFIG::ConfigBase::GetSingleton(MAINT::CONFIG::CONFIG_FILE);
+
+	const std::map<std::string, spdlog::level::level_enum> logMap = {
+		{ "off", spdlog::level::level_enum::off },
+		{ "info", spdlog::level::level_enum::info },
+		{ "debug", spdlog::level::level_enum::debug },
+	};
+	if (!ini->HasKey("CONFIG", "LogLevel")) {
+		ini->SetValue("CONFIG", "LogLevel", "off", "# Options: off, info, debug");
+	}
+
+	auto const confLogLevel = ini->GetValue("CONFIG", "LogLevel");
+	logger::info("Set Log Level to {}", confLogLevel);
+	if (auto const& it = logMap.find(confLogLevel); it != logMap.end())
+		spdlog::set_level(it->second);
+	else
+		spdlog::set_level(spdlog::level::level_enum::off);
+
+	if (!ini->HasKey("CONFIG", "SilencePersistentSpellFX")) {
+		ini->SetBoolValue("CONFIG", "SilencePersistentSpellFX", false, "# If true, will disable persistent spell visuals on maintained spells. This includes flesh spell FX, the aura of Cloak spells, pretty much everything else.");
+	}
+	MAINT::CONFIG::DoSilenceFX = ini->GetBoolValue("CONFIG", "SilencePersistentSpellFX");
+	logger::info("FX Will {} silenced", MAINT::CONFIG::DoSilenceFX ? "be" : "not be");
+
+	ini->Save();
+}
+
 void OnInit(SKSE::MessagingInterface::Message* const a_msg)
 {
 	switch (a_msg->type) {
 	case SKSE::MessagingInterface::kDataLoaded:
-		logger::info("Maintained Map @ {}", MAINT::CONFIG::MAP_FILE);
-		logger::info("Maintained Config @ {}", MAINT::CONFIG::CONFIG_FILE);
-
-		static auto const& ini = MAINT::CONFIG::ConfigBase::GetSingleton(MAINT::CONFIG::CONFIG_FILE);
-		if (!ini->HasKey("CONFIG", "SilencePersistentSpellFX")) {
-			ini->SetBoolValue("CONFIG", "SilencePersistentSpellFX", false, "# If true, will disable persistent spell visuals on maintained spells. This includes flesh spell FX, the aura of Cloak spells, pretty much everything else.");
-			ini->Save();
-		}
-		MAINT::CONFIG::DoSilenceFX = ini->GetBoolValue("CONFIG", "SilencePersistentSpellFX");
-		logger::info("FX Will {} silenced", MAINT::CONFIG::DoSilenceFX ? "be" : "not be");
+		ReadConfiguration();
 		break;
 	case SKSE::MessagingInterface::kPreLoadGame:
 	case SKSE::MessagingInterface::kNewGame:
