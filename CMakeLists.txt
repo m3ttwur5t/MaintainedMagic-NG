@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
 	MaintainedMagicNG
-	VERSION 1.2.0
+	VERSION 2.0.0
 	LANGUAGES CXX
 )
 

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "Bimap.h"
+#include "FFIDMAN_API.hpp"
 #include <SimpleIni.h>
 
 namespace MAINT
 {
+	const std::string_view PLUGIN_NAME = Plugin::NAME;
 	float constexpr NEUTRAL_DURATION = 60.0f;
 
 	void ForceMaintainedSpellUpdate(RE::Actor* const&);
@@ -66,9 +68,11 @@ namespace MAINT
 
 	namespace CONFIG
 	{
-		std::string const& MAP_FILE		= "Data/SKSE/Plugins/MaintainedMagicNG.ini";
-		std::string const& CONFIG_FILE	= "Data/SKSE/Plugins/MaintainedMagicNG.Config.ini";
+		std::string const& MAP_FILE = std::format("Data/SKSE/Plugins/{}.ini", PLUGIN_NAME);
+		std::string const& CONFIG_FILE = std::format("Data/SKSE/Plugins/{}.Config.ini", PLUGIN_NAME);
 		inline bool DoSilenceFX;
+		inline float ExpMultiplier;
+
 		class ConfigBase
 		{
 		private:
@@ -143,19 +147,29 @@ namespace MAINT
 				return Ini.GetBoolValue(section.c_str(), key.c_str());
 			}
 
-			void SetValue(const std::string& section, const std::string& key, const std::string& value, const std::string& comment = std::string())
+			double GetDoubleValue(const std::string& section, const std::string& key)
+			{
+				return Ini.GetDoubleValue(section.c_str(), key.c_str());
+			}
+
+			void SetValue(const std::string& section, const std::string& key, std::string const& value, const std::string& comment = std::string())
 			{
 				Ini.SetValue(section.c_str(), key.c_str(), value.c_str(), comment.length() > 0 ? comment.c_str() : (const char*)0);
 			}
 
-			void SetBoolValue(const std::string& section, const std::string& key, const bool value, const std::string& comment = std::string())
+			void SetBoolValue(const std::string& section, const std::string& key, bool const& value, const std::string& comment = std::string())
 			{
 				Ini.SetBoolValue(section.c_str(), key.c_str(), value, comment.length() > 0 ? comment.c_str() : (const char*)0);
 			}
 
-			void SetLongValue(const std::string& section, const std::string& key, const long value, const std::string& comment = std::string())
+			void SetLongValue(const std::string& section, const std::string& key, long const& value, const std::string& comment = std::string())
 			{
 				Ini.SetLongValue(section.c_str(), key.c_str(), value, comment.length() > 0 ? comment.c_str() : (const char*)0);
+			}
+
+			void SetDoubleValue(const std::string& section, const std::string& key, double const& value, const std::string& comment = std::string())
+			{
+				Ini.SetDoubleValue(section.c_str(), key.c_str(), value, comment.length() > 0 ? comment.c_str() : (const char*)0);
 			}
 
 			void Save()
@@ -189,9 +203,23 @@ namespace MAINT
 		}
 		void LoadOffset(const CONFIG::ConfigBase* config, const std::string& saveFile)
 		{
+			constexpr auto getLargestFormIDFromPair = [](const std::string& part) -> RE::FormID {
+				std::size_t tildePos = part.find("~");
+
+				if (tildePos == std::string::npos)
+					return 0x0;
+				try {
+					auto leftID = lexical_cast_hex_to_formid(part.substr(0, tildePos));
+					auto rightID = lexical_cast_hex_to_formid(part.substr(tildePos + 1));
+					return leftID > rightID ? leftID : rightID;
+				} catch (...) {
+					return 0x0;
+				}
+			};
+
 			RE::FormID off = 0x0;
 			for (const auto& [k, v] : config->GetAllKeyValuePairs(std::format("MAP:{}", saveFile))) {
-				RE::FormID cur = lexical_cast_hex_to_formid(v);
+				auto cur = getLargestFormIDFromPair(v);
 				if (cur > off)
 					off = cur;
 			}
@@ -202,8 +230,20 @@ namespace MAINT
 		}
 		RE::FormID NextFormID() const
 		{
-			static RE::FormID current = 0;
-			return FORMID_OFFSET_BASE + (++current) + CurrentOffset;
+			static auto idman = FFIDMAN_API::Manager::GetInstance();
+			if (idman->IsLoaded()) {
+				return idman->GetNextFormID(PLUGIN_NAME.data());
+			} else {
+				static RE::FormID current = 0;
+				return FORMID_OFFSET_BASE + (++current) + CurrentOffset;
+			}
+		}
+		void ReleaseFormID(RE::FormID id)
+		{
+			static auto idman = FFIDMAN_API::Manager::GetInstance();
+			if (idman->IsLoaded()) {
+				idman->ReleaseFormID(id, PLUGIN_NAME.data());
+			}
 		}
 		static FORMS& GetSingleton()
 		{
@@ -261,7 +301,7 @@ namespace MAINT
 			UpdatePC(pc, delta);
 			TimerActiveEffCheck += delta;
 			TimerExperienceAward += delta;
-			if (TimerActiveEffCheck >= 2.50f) {
+			if (TimerActiveEffCheck >= 2.0f) {
 				MAINT::ForceMaintainedSpellUpdate(pc);
 				MAINT::CheckUpkeepValidity(pc);
 				while (!EffectRestorationQueue.empty()) {
