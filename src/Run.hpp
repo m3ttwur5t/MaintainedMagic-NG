@@ -180,7 +180,7 @@ namespace MAINT
 	class FORMS
 	{
 	public:
-		static constexpr RE::FormID FORMID_OFFSET_BASE = 0xFF077000;
+		static constexpr RE::FormID FORMID_OFFSET_BASE = 0xFF01F000;
 		RE::FormID CurrentOffset;
 
 		void SetOffset(RE::FormID offset)
