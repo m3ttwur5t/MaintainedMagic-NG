@@ -513,9 +513,6 @@ namespace MAINT
 				MAINT::CACHE::SpellToMaintainedSpell.eraseKey(baseSpell);
 				MAINT::FORMS::GetSingleton().ReleaseFormID(maintSpell->GetFormID());
 				MAINT::FORMS::GetSingleton().ReleaseFormID(debuffSpell->GetFormID());
-
-				maintSpell->SetDelete(true);
-				debuffSpell->SetDelete(true);
 			}
 			MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->ClearData();
 			for (const auto& [spl, _] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap())
