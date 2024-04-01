@@ -232,7 +232,7 @@ namespace MAINT
 		{
 			static auto idman = FFIDMAN_API::Manager::GetInstance();
 			if (idman->IsLoaded()) {
-				return idman->GetNextFormID(PLUGIN_NAME.data());
+				return idman->GetNextFormIDLocal(PLUGIN_NAME.data());
 			} else {
 				static RE::FormID current = 0;
 				return FORMID_OFFSET_BASE + (++current) + CurrentOffset;
@@ -242,7 +242,7 @@ namespace MAINT
 		{
 			static auto idman = FFIDMAN_API::Manager::GetInstance();
 			if (idman->IsLoaded()) {
-				idman->ReleaseFormID(id, PLUGIN_NAME.data());
+				idman->ReleaseFormIDLocal(id, PLUGIN_NAME.data());
 			}
 		}
 		static FORMS& GetSingleton()
