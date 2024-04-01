@@ -323,7 +323,6 @@ namespace MAINT
 
 		MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->AddForm(baseSpell);
 		RE::DebugNotification(std::format("Maintaining {} for {} Magicka.", baseSpell->GetName(), static_cast<uint32_t>(magCost)).c_str());
-		MAINT::UpdatePCHook::ResetEffCheckTimer();
 	}
 
 	static void StoreSavegameMapping(const std::string& identifier)
@@ -545,8 +544,10 @@ public:
 		if (static_cast<short>(MAINT::FORMS::GetSingleton().GlobMaintainModeEnabled->value) == 0)
 			return RE::BSEventNotifyControl::kContinue;
 
-		if (const auto& theSpell = RE::TESForm::LookupByID<RE::SpellItem>(a_event->spell))
+		if (const auto& theSpell = RE::TESForm::LookupByID<RE::SpellItem>(a_event->spell)) {
 			MAINT::MaintainSpell(theSpell, theCaster);
+			MAINT::UpdatePCHook::ResetEffCheckTimer();
+		}
 
 		return RE::BSEventNotifyControl::kContinue;
 	}

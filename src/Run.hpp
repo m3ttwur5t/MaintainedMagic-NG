@@ -189,9 +189,23 @@ namespace MAINT
 		}
 		void LoadOffset(const CONFIG::ConfigBase* config, const std::string& saveFile)
 		{
+			constexpr auto getLargestFormIDFromPair = [](const std::string& part) -> RE::FormID {
+				std::size_t tildePos = part.find("~");
+
+				if (tildePos == std::string::npos)
+					return 0x0;
+				try {
+					auto leftID = lexical_cast_hex_to_formid(part.substr(0, tildePos));
+					auto rightID = lexical_cast_hex_to_formid(part.substr(tildePos + 1));
+					return leftID > rightID ? leftID : rightID;
+				} catch (...) {
+					return 0x0;
+				}
+			};
+
 			RE::FormID off = 0x0;
 			for (const auto& [k, v] : config->GetAllKeyValuePairs(std::format("MAP:{}", saveFile))) {
-				RE::FormID cur = lexical_cast_hex_to_formid(v);
+				auto cur = getLargestFormIDFromPair(v);
 				if (cur > off)
 					off = cur;
 			}
