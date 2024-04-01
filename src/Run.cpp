@@ -82,19 +82,14 @@ namespace MAINT
 		return true;
 	}
 
-	static RE::SpellItem* CreateMaintainSpell(RE::SpellItem* const& theSpell, RE::FormID forceFormID = 0x0)
+	static RE::SpellItem* CreateMaintainSpell(RE::SpellItem* const& theSpell)
 	{
 		static auto const& spellFactory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::SpellItem>();
 		const auto& fileString = theSpell->GetFile(0) ? theSpell->GetFile(0)->GetFilename() : "VIRTUAL";
 		logger::info("Maintainify({}, 0x{:08X}~{})", theSpell->GetName(), theSpell->GetLocalFormID(), fileString);
 
 		auto infiniteSpell = spellFactory->Create();
-
-		if (forceFormID == 0x0) {
-			infiniteSpell->SetFormID(MAINT::FORMS::GetSingleton().NextFormID(), false);
-		} else {
-			infiniteSpell->SetFormID(forceFormID, false);
-		}
+		infiniteSpell->SetFormID(MAINT::FORMS::GetSingleton().NextFormID(), false);
 
 		infiniteSpell->fullName = std::format("Maintained {}", theSpell->GetFullName());
 
@@ -128,19 +123,14 @@ namespace MAINT
 		return infiniteSpell;
 	}
 
-	static RE::SpellItem* CreateDebuffSpell(RE::SpellItem* const& theSpell, float const& magnitude, RE::FormID forceFormID = 0x0)
+	static RE::SpellItem* CreateDebuffSpell(RE::SpellItem* const& theSpell, float const& magnitude)
 	{
 		static auto const& spellFactory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::SpellItem>();
 		const auto& fileString = theSpell->GetFile(0) ? theSpell->GetFile(0)->GetFilename() : "VIRTUAL";
 		logger::info("Debuffify({}, 0x{:08X}~{})", theSpell->GetName(), theSpell->GetLocalFormID(), fileString);
 
 		auto debuffSpell = spellFactory->Create();
-
-		if (forceFormID == 0x0) {
-			debuffSpell->SetFormID(MAINT::FORMS::GetSingleton().NextFormID(), false);
-		} else {
-			debuffSpell->SetFormID(forceFormID, false);
-		}
+		debuffSpell->SetFormID(MAINT::FORMS::GetSingleton().NextFormID(), false);
 
 		debuffSpell->fullName = std::format("Maintained {}", theSpell->GetFullName());
 
@@ -251,18 +241,21 @@ namespace MAINT
 			if (!baseSpell)
 				continue;
 
-			const auto& infSpell = CreateMaintainSpell(baseSpell, maintSpellFormID);
+			const auto& infSpell = CreateMaintainSpell(baseSpell);
 			if (!infSpell) {
 				logger::error("\tFailed to create Maintained Spell: {}", baseSpell->GetName());
 				return;
 			}
+			if (maintSpellFormID != 0x0)
+				infSpell->SetFormID(maintSpellFormID, false);
 
-			const auto& debuffSpell = CreateDebuffSpell(baseSpell, 0.0f, debuffSpellFormID);
+			const auto& debuffSpell = CreateDebuffSpell(baseSpell, 0.0f);
 			if (!debuffSpell) {
 				logger::error("\tFailed to create Maintained Spell: {}", baseSpell->GetName());
 				return;
 			}
-
+			if (debuffSpellFormID != 0x0)
+				debuffSpell->SetFormID(debuffSpellFormID, false);
 			MAINT::CACHE::SpellToMaintainedSpell.insert(baseSpell, { infSpell, debuffSpell });
 		}
 	}
@@ -355,10 +348,7 @@ namespace MAINT
 	{
 		for (const auto& [baseSpell, _] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap()) {
 			const auto& baseCost = baseSpell->CalculateMagickaCost(nullptr);
-			auto const& exp = MAINT::CONFIG::ExpMultiplier * baseCost;
-			auto const& avName = RE::ActorValueList::GetSingleton()->GetActorValue(baseSpell->GetAssociatedSkill())->GetName();
-			logger::info("Award {:.0f} {} XP for {}", exp, avName, baseSpell->GetName());
-			player->AddSkillExperience(baseSpell->GetAssociatedSkill(), exp);
+			player->AddSkillExperience(baseSpell->GetAssociatedSkill(), baseCost);
 		}
 	}
 
@@ -511,8 +501,6 @@ namespace MAINT
 				RE::DebugNotification(std::format("{} is no longer being maintained.", baseSpell->GetName()).c_str());
 
 				MAINT::CACHE::SpellToMaintainedSpell.eraseKey(baseSpell);
-				MAINT::FORMS::GetSingleton().ReleaseFormID(maintSpell->GetFormID());
-				MAINT::FORMS::GetSingleton().ReleaseFormID(debuffSpell->GetFormID());
 			}
 			MAINT::FORMS::GetSingleton().FlstMaintainedSpellToggle->ClearData();
 			for (const auto& [spl, _] : MAINT::CACHE::SpellToMaintainedSpell.GetForwardMap())
@@ -525,7 +513,7 @@ namespace MAINT
 		_runCount++;
 		if (_runCount == _AVG_WINDOW) {
 			auto _avgMs = (_runTime / _runCount) * 1000;
-			logger::info("ForceMaintainedSpellUpdate() avg time: {:.5f}ms", _avgMs);
+			logger::info("ForceMaintainedSpellUpdate() avg time: {}ms", _avgMs);
 			_runTime = 0.0;
 			_runCount = 0;
 		}
@@ -577,27 +565,8 @@ static void ReadConfiguration()
 		{ "info", spdlog::level::level_enum::info },
 		{ "debug", spdlog::level::level_enum::debug },
 	};
-
-	// xp mult
-	if (!ini->HasKey("CONFIG", "MaintainedExpMultiplier")) {
-		ini->SetDoubleValue("CONFIG", "MaintainedExpMultiplier", 1.0,
-			"# Every 300 seconds, receive experience for each maintained spell equal to one spell cast, multiplied by this value.\n# 0.5 is half, 2.0 is double, 0 to disable passive experience entirely.");
-	}
-	MAINT::CONFIG::ExpMultiplier = static_cast<float>(ini->GetDoubleValue("CONFIG", "MaintainedExpMultiplier"));
-	logger::info("EXP multiplier = {:.2f}", MAINT::CONFIG::ExpMultiplier);
-
-	// spell fx
-	if (!ini->HasKey("CONFIG", "SilencePersistentSpellFX")) {
-		ini->SetBoolValue("CONFIG", "SilencePersistentSpellFX", false,
-			"# If true, will disable most (obnoxious) persistent spell visuals on maintained spells. Includes flesh spell shaders, auras of cloak spells, and many others.\n# Most useful effects will still be shown, such as Candlelight.");
-	}
-	MAINT::CONFIG::DoSilenceFX = ini->GetBoolValue("CONFIG", "SilencePersistentSpellFX");
-	logger::info("FX Will {} silenced", MAINT::CONFIG::DoSilenceFX ? "be" : "not be");
-
-	// log level
 	if (!ini->HasKey("CONFIG", "LogLevel")) {
-		ini->SetValue("CONFIG", "LogLevel", "off",
-			std::format("# Verbosity of the log output written to Documents\\My Games\\Skyrim Special Edition\\SKSE\\{}.log\n# Options: off, info, debug", MAINT::PLUGIN_NAME));
+		ini->SetValue("CONFIG", "LogLevel", "off", "# Options: off, info, debug");
 	}
 
 	auto const confLogLevel = ini->GetValue("CONFIG", "LogLevel");
@@ -606,6 +575,12 @@ static void ReadConfiguration()
 		spdlog::set_level(it->second);
 	else
 		spdlog::set_level(spdlog::level::level_enum::off);
+
+	if (!ini->HasKey("CONFIG", "SilencePersistentSpellFX")) {
+		ini->SetBoolValue("CONFIG", "SilencePersistentSpellFX", false, "# If true, will disable persistent spell visuals on maintained spells. This includes flesh spell FX, the aura of Cloak spells, pretty much everything else.");
+	}
+	MAINT::CONFIG::DoSilenceFX = ini->GetBoolValue("CONFIG", "SilencePersistentSpellFX");
+	logger::info("FX Will {} silenced", MAINT::CONFIG::DoSilenceFX ? "be" : "not be");
 
 	ini->Save();
 }
