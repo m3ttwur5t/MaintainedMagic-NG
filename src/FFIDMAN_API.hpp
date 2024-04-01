@@ -5,13 +5,8 @@
 namespace FFIDMAN_API
 {
 	typedef void* (*GetIDManagerInstanceFunc)();
-	typedef uint32_t (*GetNextIDLocalFunc)(void*, const char*);
-	typedef void (*ReleaseIDLocalFunc)(void*, const char*, uint32_t);
-	typedef void (*ReleaseAllLocalFunc)(void*, const char*);
-
-	typedef uint32_t (*GetNextIDGlobalFunc)(void*, const char*);
-	typedef void (*ReleaseIDGlobalFunc)(void*, const char*, uint32_t);
-	typedef void (*ReleaseAllGlobalFunc)(void*, const char*);
+	typedef uint32_t (*GetNextIDFunc)(void*);
+	typedef void (*ReleaseIDFunc)(void*, uint32_t);
 
 	class Manager
 	{
@@ -21,13 +16,8 @@ namespace FFIDMAN_API
 
 		// Retrieve function pointers
 		GetIDManagerInstanceFunc GetIDManagerInstance = (GetIDManagerInstanceFunc)GetProcAddress(hModule, "GetIDManagerInstance");
-		GetNextIDLocalFunc GetNextIDLocal = (GetNextIDLocalFunc)GetProcAddress(hModule, "GetNextIDLocal");
-		ReleaseIDLocalFunc ReleaseIDLocal = (ReleaseIDLocalFunc)GetProcAddress(hModule, "ReleaseIDLocal");
-		ReleaseAllLocalFunc ReleaseAllLocal = (ReleaseAllLocalFunc)GetProcAddress(hModule, "ReleaseAllLocal");
-
-		GetNextIDGlobalFunc GetNextIDGlobal = (GetNextIDGlobalFunc)GetProcAddress(hModule, "GetNextIDGlobal");
-		ReleaseIDGlobalFunc ReleaseIDGlobal = (ReleaseIDGlobalFunc)GetProcAddress(hModule, "ReleaseIDGlobal");
-		ReleaseAllGlobalFunc ReleaseAllGlobal = (ReleaseAllGlobalFunc)GetProcAddress(hModule, "ReleaseAllGlobal");
+		GetNextIDFunc GetNextID = (GetNextIDFunc)GetProcAddress(hModule, "GetNextID");
+		ReleaseIDFunc ReleaseID = (ReleaseIDFunc)GetProcAddress(hModule, "ReleaseID");
 
 		// Private constructor to prevent instantiation
 		Manager() { ManagerInstancePtr = GetIDManagerInstance(); }
@@ -37,30 +27,13 @@ namespace FFIDMAN_API
 		Manager& operator=(const Manager&) = delete;
 
 	public:
-		auto GetNextFormIDLocal(const char* userIdent)
+		auto GetNextFormID()
 		{
-			return static_cast<RE::FormID>(GetNextIDLocal(ManagerInstancePtr, userIdent));
+			return static_cast<RE::FormID>(GetNextID(ManagerInstancePtr));
 		}
-		void ReleaseFormIDLocal(RE::FormID id, const char* userIdent)
+		void ReleaseFormID(RE::FormID id)
 		{
-			ReleaseIDLocal(ManagerInstancePtr, userIdent, static_cast<uint32_t>(id));
-		}
-		void ReleaseAllFormIDsLocal(const char* userIdent)
-		{
-			ReleaseAllLocal(ManagerInstancePtr, userIdent);
-		}
-
-		auto GetNextFormIDGlobal(const char* userIdent)
-		{
-			return static_cast<RE::FormID>(GetNextIDGlobal(ManagerInstancePtr, userIdent));
-		}
-		void ReleaseFormIDGlobal(RE::FormID id, const char* userIdent)
-		{
-			ReleaseIDGlobal(ManagerInstancePtr, userIdent, static_cast<uint32_t>(id));
-		}
-		void ReleaseAllFormIDsGlobal(const char* userIdent)
-		{
-			ReleaseAllGlobal(ManagerInstancePtr, userIdent);
+			ReleaseID(ManagerInstancePtr, static_cast<uint32_t>(id));
 		}
 
 		static Manager* GetInstance()
