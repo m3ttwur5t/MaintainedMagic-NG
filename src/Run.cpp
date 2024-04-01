@@ -482,10 +482,10 @@ namespace MAINT
 			} else {
 				constexpr uint32_t HUGE_DUR = 60 * 60 * 24 * 356;
 				auto const& hasWrongDuration = std::find_if(effSet.begin(), effSet.end(), [&](RE::ActiveEffect* e) {
-					return e->duration > 0 && static_cast<uint32_t>(e->duration - e->elapsedSeconds) < HUGE_DUR;
+					return e->duration > 0.0 && static_cast<uint32_t>(e->duration - e->elapsedSeconds) < HUGE_DUR;
 				});
 				if (hasWrongDuration != effSet.end()) {
-					logger::debug("\tSpell duration does not match");
+					logger::debug("EFF duration does not match");
 					toRemove.emplace_back(std::make_pair(baseSpell, std::make_pair(maintSpell, debuffSpell)));
 					continue;
 				}
