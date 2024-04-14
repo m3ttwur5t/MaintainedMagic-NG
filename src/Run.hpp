@@ -5,8 +5,6 @@
 
 namespace MAINT
 {
-	float constexpr NEUTRAL_DURATION = 60.0f;
-
 	void ForceMaintainedSpellUpdate(RE::Actor* const&);
 	void AwardPlayerExperience(RE::PlayerCharacter* const& player);
 	void CheckUpkeepValidity(RE::Actor* const&);
@@ -69,6 +67,8 @@ namespace MAINT
 		std::string const& MAP_FILE		= "Data/SKSE/Plugins/MaintainedMagicNG.ini";
 		std::string const& CONFIG_FILE	= "Data/SKSE/Plugins/MaintainedMagicNG.Config.ini";
 		inline bool DoSilenceFX;
+		inline long CostBaseDuration;
+		inline float CostReductionExponent; 
 		class ConfigBase
 		{
 		private:
@@ -143,6 +143,11 @@ namespace MAINT
 				return Ini.GetBoolValue(section.c_str(), key.c_str());
 			}
 
+			double GetDoubleValue(const std::string& section, const std::string& key)
+			{
+				return Ini.GetDoubleValue(section.c_str(), key.c_str());
+			}
+
 			void SetValue(const std::string& section, const std::string& key, const std::string& value, const std::string& comment = std::string())
 			{
 				Ini.SetValue(section.c_str(), key.c_str(), value.c_str(), comment.length() > 0 ? comment.c_str() : (const char*)0);
@@ -156,6 +161,11 @@ namespace MAINT
 			void SetLongValue(const std::string& section, const std::string& key, const long value, const std::string& comment = std::string())
 			{
 				Ini.SetLongValue(section.c_str(), key.c_str(), value, comment.length() > 0 ? comment.c_str() : (const char*)0);
+			}
+
+			void SetDoubleValue(const std::string& section, const std::string& key, const double value, const std::string& comment = std::string())
+			{
+				Ini.SetDoubleValue(section.c_str(), key.c_str(), value, comment.length() > 0 ? comment.c_str() : (const char*)0);
 			}
 
 			void Save()

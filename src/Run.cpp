@@ -262,19 +262,30 @@ namespace MAINT
 
 	static auto CalculateUpkeepCost(RE::SpellItem* const& baseSpell, RE::Actor* const& theCaster)
 	{
+		auto NEUTRAL_DURATION = static_cast<float>(MAINT::CONFIG::CostBaseDuration);
+		auto EXPONENT = MAINT::CONFIG::CostReductionExponent;
 		logger::info("CalculateUpkeepCost()");
 		const auto& baseCost = baseSpell->CalculateMagickaCost(theCaster);
 		const auto& baseDuration = max(static_cast<uint32_t>(1u), baseSpell->effects.front()->GetDuration());
-		auto mult = baseDuration < NEUTRAL_DURATION ? powf(NEUTRAL_DURATION / baseDuration, 2.0f) : sqrt(NEUTRAL_DURATION / baseDuration);
+		auto mult = baseDuration < NEUTRAL_DURATION ? powf(NEUTRAL_DURATION / baseDuration, 2.0) : powf(sqrt(NEUTRAL_DURATION / baseDuration), EXPONENT);
+
 
 		float baseDur = static_cast<float>(baseSpell->effects.front()->GetDuration());
+		float finalDur = baseDur;
 		for (const auto& aeff : *theCaster->AsMagicTarget()->GetActiveEffectList()) {
 			if (aeff->spell == baseSpell && aeff->GetCasterActor().get() == theCaster && aeff->effect == baseSpell->effects.front()) {
-				const auto& durmult = sqrt(baseDur / aeff->duration);
+				finalDur = aeff->duration;
+				const auto& durmult = sqrt(baseDur / finalDur);
 				mult *= durmult;
+
 				logger::info("NeutralDur {} vs BaseDur {} vs RealDur {} => Cost Mult: {}x", NEUTRAL_DURATION, baseDur, aeff->duration, mult);
 				break;
 			}
+		}
+
+		if (finalDur > baseDur && EXPONENT > 1.0f) {
+			mult *= powf(NEUTRAL_DURATION / finalDur, EXPONENT);
+			logger::info("Mult after CostReductionExponent: {}x", mult);
 		}
 
 		return roundf(baseCost * mult);
@@ -592,6 +603,18 @@ static void ReadConfiguration()
 	}
 	MAINT::CONFIG::DoSilenceFX = ini->GetBoolValue("CONFIG", "SilencePersistentSpellFX");
 	logger::info("FX Will {} silenced", MAINT::CONFIG::DoSilenceFX ? "be" : "not be");
+
+	if (!ini->HasKey("CONFIG", "CostNeutralDuration")) {
+		ini->SetLongValue("CONFIG", "CostNeutralDuration", 60, "# At this BASE spell duration, maintenance cost will be equal to its casting cost. Shorter spells will be more expensive, longer will be cheaper.\n# Reduce to make maintenance cheaper across the board.");
+	}
+	MAINT::CONFIG::CostBaseDuration = ini->GetLongValue("CONFIG", "CostNeutralDuration");
+	logger::info("CostBaseDuration is {}", MAINT::CONFIG::CostBaseDuration);
+
+	if (!ini->HasKey("CONFIG", "CostReductionExponent")) {
+		ini->SetDoubleValue("CONFIG", "CostReductionExponent", 1.0, "# Determines the impact of long durations on maintenance cost.\n# If this is set to 2.0 and a spell would last twice as long as CostNeutralDuration, its upkeep cost would be 1/4th compared to leaving this at 1.0");
+	}
+	MAINT::CONFIG::CostReductionExponent = static_cast<float>(ini->GetDoubleValue("CONFIG", "CostReductionExponent"));
+	logger::info("CostReductionExponent is {}", MAINT::CONFIG::CostReductionExponent);
 
 	ini->Save();
 }
