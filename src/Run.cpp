@@ -125,6 +125,8 @@ namespace MAINT
 
 	static RE::SpellItem* CreateDebuffSpell(RE::SpellItem* const& theSpell, float const& magnitude)
 	{
+		static auto const& debuffSpellTemplate = MAINT::FORMS::GetSingleton().SpelMagickaDebuffTemplate;
+
 		static auto const& spellFactory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::SpellItem>();
 		const auto& fileString = theSpell->GetFile(0) ? theSpell->GetFile(0)->GetFilename() : "VIRTUAL";
 		logger::info("Debuffify({}, 0x{:08X}~{})", theSpell->GetName(), theSpell->GetLocalFormID(), fileString);
@@ -134,11 +136,11 @@ namespace MAINT
 
 		debuffSpell->fullName = std::format("Maintained {}", theSpell->GetFullName());
 
-		debuffSpell->data = RE::SpellItem::Data{ theSpell->data };
+		debuffSpell->data = RE::SpellItem::Data{ debuffSpellTemplate->data };
 
-		debuffSpell->avEffectSetting = theSpell->avEffectSetting;
-		debuffSpell->boundData = theSpell->boundData;
-		debuffSpell->descriptionText = theSpell->descriptionText;
+		debuffSpell->avEffectSetting = debuffSpellTemplate->avEffectSetting;
+		debuffSpell->boundData = debuffSpellTemplate->boundData;
+		//debuffSpell->descriptionText = theSpell->descriptionText;
 
 		debuffSpell->equipSlot = MAINT::FORMS::GetSingleton().EquipSlotVoice;
 
@@ -147,7 +149,7 @@ namespace MAINT
 		debuffSpell->SetCastingType(RE::MagicSystem::CastingType::kConstantEffect);
 
 		debuffSpell->AddKeyword(MAINT::FORMS::GetSingleton().KywdMaintainedSpell);
-		debuffSpell->effects.emplace_back(MAINT::FORMS::GetSingleton().SpelMagickaDebuffTemplate->effects.front());
+		debuffSpell->effects.emplace_back(debuffSpellTemplate->effects.front());
 		debuffSpell->effects.back()->effectItem.magnitude = magnitude;
 
 		return debuffSpell;
@@ -262,13 +264,18 @@ namespace MAINT
 
 	static auto CalculateUpkeepCost(RE::SpellItem* const& baseSpell, RE::Actor* const& theCaster)
 	{
-		auto NEUTRAL_DURATION = static_cast<float>(MAINT::CONFIG::CostBaseDuration);
-		auto EXPONENT = MAINT::CONFIG::CostReductionExponent;
+		static auto const& NEUTRAL_DURATION = static_cast<float>(MAINT::CONFIG::CostBaseDuration);
+		static auto const& EXPONENT = MAINT::CONFIG::CostReductionExponent;
+
 		logger::info("CalculateUpkeepCost()");
 		const auto& baseCost = baseSpell->CalculateMagickaCost(theCaster);
+
+		if (NEUTRAL_DURATION == 0.0F) {
+			return baseCost;
+		}
+
 		const auto& baseDuration = max(static_cast<uint32_t>(1u), baseSpell->effects.front()->GetDuration());
 		auto mult = baseDuration < NEUTRAL_DURATION ? powf(NEUTRAL_DURATION / baseDuration, 2.0) : powf(sqrt(NEUTRAL_DURATION / baseDuration), EXPONENT);
-
 
 		float baseDur = static_cast<float>(baseSpell->effects.front()->GetDuration());
 		float finalDur = baseDur;
@@ -283,7 +290,7 @@ namespace MAINT
 			}
 		}
 
-		if (finalDur > baseDur && EXPONENT > 1.0f) {
+		if (finalDur > baseDur) {
 			mult *= powf(NEUTRAL_DURATION / finalDur, EXPONENT);
 			logger::info("Mult after CostReductionExponent: {}x", mult);
 		}
@@ -605,13 +612,13 @@ static void ReadConfiguration()
 	logger::info("FX Will {} silenced", MAINT::CONFIG::DoSilenceFX ? "be" : "not be");
 
 	if (!ini->HasKey("CONFIG", "CostNeutralDuration")) {
-		ini->SetLongValue("CONFIG", "CostNeutralDuration", 60, "# At this BASE spell duration, maintenance cost will be equal to its casting cost. Shorter spells will be more expensive, longer will be cheaper.\n# Reduce to make maintenance cheaper across the board.");
+		ini->SetLongValue("CONFIG", "CostNeutralDuration", 60, "# At this BASE spell duration, maintenance cost will be equal to its casting cost. Shorter spells will be more expensive, longer will be cheaper.\n# Reduce to make maintenance cheaper across the board.\n# Set to 0 to disable all cost scaling and only use the spell's casting cost.");
 	}
 	MAINT::CONFIG::CostBaseDuration = ini->GetLongValue("CONFIG", "CostNeutralDuration");
-	logger::info("CostBaseDuration is {}", MAINT::CONFIG::CostBaseDuration);
+	logger::info("CostNeutralDuration is {}", MAINT::CONFIG::CostBaseDuration);
 
 	if (!ini->HasKey("CONFIG", "CostReductionExponent")) {
-		ini->SetDoubleValue("CONFIG", "CostReductionExponent", 1.0, "# Determines the impact of long durations on maintenance cost.\n# If this is set to 2.0 and a spell would last twice as long as CostNeutralDuration, its upkeep cost would be 1/4th compared to leaving this at 1.0");
+		ini->SetDoubleValue("CONFIG", "CostReductionExponent", 0.0, "# Determines the impact of long durations on maintenance cost.\n# If this is set to 2.0 and a spell would last twice as long as CostNeutralDuration, its upkeep cost would be 1/4th compared to leaving this at 0.0\n# 1.0 would halve the cost. -1.0 would double it instead.\n# 0.0 = Disabled");
 	}
 	MAINT::CONFIG::CostReductionExponent = static_cast<float>(ini->GetDoubleValue("CONFIG", "CostReductionExponent"));
 	logger::info("CostReductionExponent is {}", MAINT::CONFIG::CostReductionExponent);
